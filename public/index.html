@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ride Sharing App</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; background: #f4f7fb; color: #222; }
+      .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+      .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+      .card { background: white; padding: 20px; border-radius: 14px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); }
+      form { display: grid; gap: 10px; }
+      input, button { padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1; }
+      button { background: #2563eb; color: white; border: none; cursor: pointer; }
+      .secondary { background: #e2e8f0; color: #0f172a; }
+      .danger { background: #dc2626; }
+      .mode-toggle { background: #e2e8f0; color: #0f172a; margin-right: 8px; }
+      .mode-toggle.active { background: #2563eb; color: white; }
+      .ride { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid #eee; }
+      .ride-meta { flex: 1; }
+      .map-preview { margin-top: 8px; border: 1px solid #dbeafe; border-radius: 10px; padding: 10px; background: linear-gradient(135deg, #eff6ff, #f8fafc); }
+      .map-bar { width: 100%; height: 10px; margin-top: 8px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
+      .map-progress { height: 100%; background: linear-gradient(90deg, #2563eb, #0ea5e9); }
+      .muted { color: #64748b; font-size: 0.95rem; }
+      .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+      .pill { display: inline-block; padding: 4px 8px; border-radius: 999px; background: #dcfce7; color: #166534; font-size: 0.85rem; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="topbar">
+        <h1>Ride Sharing App</h1>
+        <div id="auth-status" class="muted"></div>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <h2>Sign in or create account</h2>
+          <div>
+            <button type="button" class="mode-toggle active" id="login-toggle">Login</button>
+            <button type="button" class="mode-toggle" id="signup-toggle">Sign up</button>
+          </div>
+          <form id="auth-form">
+            <input name="username" placeholder="Username" required />
+            <input id="email-input" name="email" type="email" placeholder="Email" style="display:none;" />
+            <label id="email-updates-label" style="display:none; margin-top: 8px; font-size: 0.95em; color: #666;">
+              <input id="email-updates-input" name="email_updates" type="checkbox" /> Send me ride updates and follow-ups via email
+            </label>
+            <input name="password" type="password" placeholder="Password" required />
+            <button type="submit" id="auth-submit">Log in</button>
+          </form>
+          <p id="auth-message" class="muted"></p>
+          <button type="button" class="secondary" id="logout-button" style="display:none;">Log out</button>
+        </div>
+
+        <div class="card">
+          <h2>Offer a ride</h2>
+          <form id="ride-form">
+            <input name="from" placeholder="From" required />
+            <input name="to" placeholder="To" required />
+            <input name="seats" type="number" placeholder="Seats" min="1" max="8" required />
+            <button type="submit">Create ride</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="grid" style="margin-top: 16px;">
+        <div class="card">
+          <h2>Available rides</h2>
+          <input id="ride-search" placeholder="Search rides" style="width:100%; box-sizing:border-box; margin-bottom:10px;" />
+          <div id="ride-list"></div>
+        </div>
+        <div class="card">
+          <h2>Your bookings</h2>
+          <div id="booking-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const authForm = document.getElementById('auth-form');
+      const authStatus = document.getElementById('auth-status');
+      const authMessage = document.getElementById('auth-message');
+      const authSubmit = document.getElementById('auth-submit');
+      const logoutButton = document.getElementById('logout-button');
+      const rideForm = document.getElementById('ride-form');
+      const rideList = document.getElementById('ride-list');
+      const bookingList = document.getElementById('booking-list');
+      const rideSearch = document.getElementById('ride-search');
+      const loginToggle = document.getElementById('login-toggle');
+      const signupToggle = document.getElementById('signup-toggle');
+      const emailInput = document.getElementById('email-input');
+      const emailUpdatesInput = document.getElementById('email-updates-input');
+      const emailUpdatesLabel = document.getElementById('email-updates-label');
+      let authMode = 'login';
+      let allRides = [];
+      let allBookings = [];
+      let currentUserId = null;
+
+      function setAuthMode(mode) {
+        authMode = mode;
+        loginToggle.classList.toggle('active', mode === 'login');
+        signupToggle.classList.toggle('active', mode === 'signup');
+        authSubmit.textContent = mode === 'login' ? 'Log in' : 'Create account';
+        const showSignupFields = mode === 'signup';
+        emailInput.style.display = showSignupFields ? 'block' : 'none';
+        emailUpdatesLabel.style.display = showSignupFields ? 'block' : 'none';
+        emailInput.required = showSignupFields;
+      }
+
+      async function loadAuthState() {
+        try {
+          const res = await fetch('/api/auth/me');
+          if (!res.ok) {
+            currentUserId = null;
+            authStatus.textContent = 'Not signed in';
+            logoutButton.style.display = 'none';
+            return;
+          }
+          const data = await res.json();
+          currentUserId = data.user.id;
+          authStatus.textContent = `Signed in as ${data.user.username}`;
+          authMessage.textContent = 'You can create rides, book seats, rate rides, and share live driver updates.';
+          logoutButton.style.display = 'inline-block';
+        } catch (error) {
+          currentUserId = null;
+          authStatus.textContent = 'Not signed in';
+          logoutButton.style.display = 'none';
+        }
+      }
+
+      function renderRides() {
+        const query = rideSearch.value.trim().toLowerCase();
+        const filtered = allRides.filter((ride) => {
+          const haystack = `${ride.driver_name} ${ride.from_location} ${ride.to_location}`.toLowerCase();
+          return haystack.includes(query);
+        });
+
+        const bookedRideIds = new Set(allBookings.map((booking) => booking.ride_id));
+        const paidBookingIds = new Set(allBookings.filter((booking) => booking.is_paid).map((booking) => booking.ride_id));
+
+        rideList.innerHTML = filtered.length ? filtered.map((ride) => `
+          <div class="ride">
+            <div class="ride-meta">
+              <strong>${ride.driver_name}</strong><br />
+              <span class="muted">${ride.from_location} → ${ride.to_location}</span><br />
+              <span class="muted">${ride.available_seats} seats left · ${ride.average_score ? `${ride.average_score.toFixed(1)}★` : 'No ratings yet'} (${ride.rating_count || 0})</span>
+              <div class="map-preview">
+                <strong>Route map</strong><br />
+                <span class="muted">${ride.from_location} to ${ride.to_location}</span>
+                <div class="map-bar"><div class="map-progress" style="width:${ride.progress}%"></div></div>
+                <div class="muted" style="margin-top:6px;">${ride.latest_location ? `${ride.latest_location.status} · ${ride.progress}% complete` : 'Tracking not started yet'}</div>
+              </div>
+            </div>
+            <div>
+              ${currentUserId && currentUserId === ride.user_id ? `<button class="secondary" data-track-id="${ride.id}" data-start-lat="${ride.route_start.latitude}" data-start-lng="${ride.route_start.longitude}" data-end-lat="${ride.route_end.latitude}" data-end-lng="${ride.route_end.longitude}" data-current-lat="${ride.latest_location ? ride.latest_location.latitude : ride.route_start.latitude}" data-current-lng="${ride.latest_location ? ride.latest_location.longitude : ride.route_start.longitude}">Share location</button>` : ''}
+              ${paidBookingIds.has(ride.id) ? `<button class="secondary" data-rate-id="${ride.id}" style="margin-top:6px;">Rate</button>` : bookedRideIds.has(ride.id) ? `<span class="pill" style="margin-top:6px; display:inline-block;">Pending payment</span>` : `<button class="secondary" data-book-id="${ride.id}" style="margin-top:6px;">Pay $5.00 to book</button>`}
+            </div>
+          </div>
+        `).join('') : '<p class="muted">No matching rides.</p>';
+      }
+
+      async function loadRides() {
+        const res = await fetch('/api/rides');
+        allRides = await res.json();
+        renderRides();
+      }
+
+      async function loadBookings() {
+        const res = await fetch('/api/bookings');
+        if (!res.ok) {
+          allBookings = [];
+          bookingList.innerHTML = '<p class="muted">Sign in to see your bookings.</p>';
+          renderRides();
+          return;
+        }
+        allBookings = await res.json();
+        bookingList.innerHTML = allBookings.length ? allBookings.map((b) => `
+          <div class="ride">
+            <div class="ride-meta">
+              <strong>${b.driver_name}</strong><br />
+              <span class="muted">${b.from_location} → ${b.to_location}</span><br />
+              <span class="pill">${b.is_paid ? 'Paid booking' : 'Pending payment'}</span>
+            </div>
+            <div>
+              ${b.is_paid ? '' : `<button class="secondary" data-pay-booking-id="${b.ride_id}" style="margin-top:6px;">Complete payment</button>`}
+              <button class="danger" data-cancel-booking-id="${b.id}" style="margin-top:6px;">Cancel</button>
+            </div>
+          </div>
+        `).join('') : '<p class="muted">You have no bookings yet.</p>';
+        renderRides();
+      }
+
+      async function confirmCheckoutFromQuery() {
+        const params = new URLSearchParams(window.location.search);
+        const sessionId = params.get('session_id');
+        if (!sessionId) return;
+
+        const res = await fetch('/api/bookings/confirm-checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId })
+        });
+
+        const data = await res.json();
+        if (res.ok && data.ok) {
+          authMessage.textContent = 'Payment confirmed and booking completed!';
+          params.delete('session_id');
+          const newUrl = `${window.location.origin}${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`;
+          window.history.replaceState({}, '', newUrl);
+          await loadRides();
+          await loadBookings();
+        } else {
+          authMessage.textContent = data.error || 'Unable to confirm payment.';
+        }
+      }
+
+      authForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const form = new FormData(event.target);
+        const payload = Object.fromEntries(form.entries());
+        if (authMode === 'signup') {
+          payload.email_updates = emailUpdatesInput.checked;
+        }
+        const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/signup';
+
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          authMessage.textContent = data.error || 'Unable to complete request';
+          return;
+        }
+
+        authMessage.textContent = `Welcome, ${data.user.username}!`;
+        event.target.reset();
+        await loadAuthState();
+        await loadRides();
+        await loadBookings();
+      });
+
+      logoutButton.addEventListener('click', async () => {
+        await fetch('/api/auth/logout', { method: 'POST' });
+        authMessage.textContent = 'You have been logged out.';
+        await loadAuthState();
+        await loadBookings();
+      });
+
+      rideForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const form = new FormData(event.target);
+        const payload = Object.fromEntries(form.entries());
+
+        const res = await fetch('/api/rides', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+          event.target.reset();
+          await loadRides();
+        }
+      });
+
+      rideSearch.addEventListener('input', renderRides);
+
+      document.addEventListener('click', async (event) => {
+        const bookButton = event.target.closest('[data-book-id]');
+        if (bookButton) {
+          const id = bookButton.getAttribute('data-book-id');
+          const res = await fetch('/api/bookings/create-checkout-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rideId: Number(id) })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.url) {
+              window.location.href = data.url;
+              return;
+            }
+          }
+          const data = await res.json().catch(() => ({}));
+          authMessage.textContent = data.error || 'Unable to create payment session';
+          return;
+        }
+
+        const payBookingButton = event.target.closest('[data-pay-booking-id]');
+        if (payBookingButton) {
+          const rideId = payBookingButton.getAttribute('data-pay-booking-id');
+          const res = await fetch('/api/bookings/create-checkout-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rideId: Number(rideId) })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.url) {
+              window.location.href = data.url;
+              return;
+            }
+          }
+          const data = await res.json().catch(() => ({}));
+          authMessage.textContent = data.error || 'Unable to create payment session';
+          return;
+        }
+
+        const cancelButton = event.target.closest('[data-cancel-booking-id]');
+        if (cancelButton) {
+          const bookingId = cancelButton.getAttribute('data-cancel-booking-id');
+          const res = await fetch(`/api/bookings/${bookingId}`, { method: 'DELETE' });
+          if (res.ok) {
+            await loadRides();
+            await loadBookings();
+          } else {
+            const data = await res.json().catch(() => ({}));
+            authMessage.textContent = data.error || 'Unable to cancel booking';
+          }
+          return;
+        }
+
+        const trackButton = event.target.closest('[data-track-id]');
+        if (trackButton) {
+          const id = trackButton.getAttribute('data-track-id');
+          const status = window.prompt('Describe the live driver status', 'En route');
+          const startLat = Number(trackButton.dataset.startLat) || 0;
+          const startLng = Number(trackButton.dataset.startLng) || 0;
+          const endLat = Number(trackButton.dataset.endLat) || 0;
+          const endLng = Number(trackButton.dataset.endLng) || 0;
+          const currentLat = Number(trackButton.dataset.currentLat) || startLat;
+          const currentLng = Number(trackButton.dataset.currentLng) || startLng;
+          let lat = currentLat;
+          let lng = currentLng;
+
+          if (startLat || startLng || endLat || endLng) {
+            const step = 0.25;
+            lat = currentLat + (endLat - currentLat) * step;
+            lng = currentLng + (endLng - currentLng) * step;
+          } else {
+            lat = 40.7128 + (Math.random() * 0.02);
+            lng = -74.0060 + (Math.random() * 0.02);
+          }
+
+          const res = await fetch(`/api/rides/${id}/location`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ latitude: lat, longitude: lng, status: status || 'En route' })
+          });
+          if (res.ok) {
+            authMessage.textContent = 'Driver location shared.';
+            await loadRides();
+          }
+          return;
+        }
+
+        const rateButton = event.target.closest('[data-rate-id]');
+        if (rateButton) {
+          const id = rateButton.getAttribute('data-rate-id');
+          const score = window.prompt('Rate this ride from 1 to 5', '5');
+          const comment = window.prompt('Add a short comment', 'Great ride');
+          const res = await fetch(`/api/rides/${id}/rate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ score: Number(score) || 5, comment: comment || '' })
+          });
+          if (res.ok) {
+            authMessage.textContent = 'Thanks for your rating.';
+            await loadRides();
+            await loadBookings();
+          }
+        }
+      });
+
+      loginToggle.addEventListener('click', () => setAuthMode('login'));
+      signupToggle.addEventListener('click', () => setAuthMode('signup'));
+
+      setAuthMode('login');
+      loadAuthState();
+      confirmCheckoutFromQuery();
+      loadRides();
+      loadBookings();
+    </script>
+  </body>
+</html>
